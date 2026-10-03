@@ -1,0 +1,14 @@
+# Warehouse file is rebuilt from warehouse/schema.sql by warehouse-init
+warehouse/*.duckdb
+warehouse/*.duckdb.wal
+
+# Pipeline output: simulated rides and processed files. The folders are
+# kept with .gitkeep, their content is runtime data.
+data-lake/input/streaming/*
+data-lake/archive/*/*
+data-lake/quarantine/*/*
+!data-lake/**/.gitkeep
+
+__pycache__/
+*.pyc
+.DS_Store

@@ -1,0 +1,68 @@
+# Every folder mounted below is a BIND MOUNT (a host folder shared into a
+# container), not a Docker-managed named volume -- on purpose: it's why you
+# can open warehouse/indrive.duckdb or browse data-lake/ straight from your
+# file explorer, with nothing to look up in Docker first. That's also why
+# `docker volume ls` shows nothing for this project: there's nothing to name
+# there, the data simply lives in this folder.
+# What IS named below: the network everything talks over, and every
+# container -- so `docker ps` and Docker Desktop read clearly instead of
+# showing auto-generated names.
+name: indrive_pipeline
+
+networks:
+  indrive_net:
+    name: indrive_net
+
+services:
+  # Runs once, builds warehouse/indrive.duckdb from warehouse/schema.sql,
+  # then exits. Airflow only starts after this succeeds -- schema creation
+  # is a build-time concern, never a DAG task. duckdb is installed once when
+  # the image is BUILT (see warehouse/Dockerfile), not every time it starts.
+  warehouse-init:
+    build: ./warehouse
+    container_name: indrive-warehouse-init
+    networks: [indrive_net]
+    volumes:
+      - ./warehouse:/opt/warehouse   # schema.sql in, indrive.duckdb out -- both stay on your host
+
+  airflow:
+    build: ./airflow   # apache/airflow + duckdb/pandas baked in, see airflow/Dockerfile
+    container_name: indrive-airflow
+    command: standalone
+    depends_on:
+      warehouse-init:
+        condition: service_completed_successfully
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"                # hide Airflow's demo DAGs
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"   # our DAG runs without a manual unpause
+    networks: [indrive_net]
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./data-lake:/opt/airflow/data-lake
+      - ./warehouse:/opt/airflow/warehouse
+      - ./scripts:/opt/airflow/scripts
+    ports:
+      - "8081:8080"
+
+  # Read-only warehouse browser -- open http://localhost:8090 instead of
+  # exec-ing into a container to run SQL by hand. See viewer/serve.py.
+  warehouse-viewer:
+    build: ./viewer
+    container_name: indrive-warehouse-viewer
+    depends_on:
+      warehouse-init:
+        condition: service_completed_successfully
+    networks: [indrive_net]
+    volumes:
+      - ./warehouse:/opt/warehouse
+    ports:
+      - "8090:8090"
+
+  # Simulated ride requests, one JSON file per second -- see
+  # consumer/simulate_rides.py. Fully local: no external API to reach.
+  stream-consumer:
+    build: ./consumer
+    container_name: indrive-stream-consumer
+    networks: [indrive_net]
+    volumes:
+      - ./data-lake/input/streaming:/app/raw_rides
